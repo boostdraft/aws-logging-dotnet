@@ -23,6 +23,9 @@ namespace AWS.Logger.Core
     /// </summary>
     public class AWSLoggerCore : IAWSLoggerCore
     {
+        private const string MSG_PREFIX = "JamesVerAWSLogger: ";
+        private static TimeSpan s_LogTimestampOffset = TimeSpan.Zero;
+
         const int MAX_MESSAGE_SIZE_IN_BYTES = 256000;
 
         #region Private Members
@@ -240,6 +243,7 @@ namespace AWS.Logger.Core
 
         private void AddSingleMessage(string message)
         {
+            message = MSG_PREFIX + message;
             if (_pendingMessageQueue.Count > _config.MaxQueuedMessages)
             {
                 if (_maxBufferTimeStamp.AddMinutes(MAX_BUFFER_TIMEDIFF) < DateTime.UtcNow)
@@ -252,7 +256,7 @@ namespace AWS.Logger.Core
                     _maxBufferTimeStamp = DateTime.UtcNow;
                     _pendingMessageQueue.Enqueue(new InputLogEvent
                     {
-                        Timestamp = DateTime.UtcNow,
+                        Timestamp = DateTime.UtcNow + s_LogTimestampOffset,
                         Message = message,
                     });
                 }
@@ -261,7 +265,7 @@ namespace AWS.Logger.Core
             {
                 _pendingMessageQueue.Enqueue(new InputLogEvent
                 {
-                    Timestamp = DateTime.UtcNow,
+                    Timestamp = DateTime.UtcNow + s_LogTimestampOffset,
                     Message = message,
                 });
             }
@@ -399,6 +403,10 @@ namespace AWS.Logger.Core
                     // We don't want to kill the main monitor loop. We will simply log the error, then continue.
                     // If it is an OperationCancelledException, die
                     LogLibraryServiceError(ex);
+
+                    //drop logs in sending batch since those logs may cause exceptions
+                    _repo.Reset(null);
+                    LogLibraryServiceError(new Exception("Logs in sending batch are dropped because of exceptions"));
                 }
             }
         }
