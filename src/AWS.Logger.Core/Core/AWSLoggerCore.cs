@@ -411,6 +411,25 @@ namespace AWS.Logger.Core
             }
         }
 
+        private void PrepareLogEventBatchForSending()
+        {
+            //Make sure the log events are in the right order.
+            _repo._request.LogEvents.Sort((ev1, ev2) => ev1.Timestamp.CompareTo(ev2.Timestamp));
+            if (_repo._request.LogEvents.Count > 0)
+            {
+                DateTime latestLogDateTime = _repo._request.LogEvents.Last().Timestamp;
+
+                //avoid the error that the log events should be in a 24 hours range
+                //https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/logs/client/put_log_events.html#put-log-events
+                while (_repo._request.LogEvents.Count > 0 &&
+                    (latestLogDateTime - _repo._request.LogEvents.First().Timestamp > TimeSpan.FromHours(24))
+                    )
+                {
+                    _repo.RemoveMessageAt(0);
+                }
+            }
+        }
+
         /// <summary>
         /// Method to transmit the PutLogEvent Request
         /// </summary>
@@ -420,8 +439,7 @@ namespace AWS.Logger.Core
         {
             try
             {
-                //Make sure the log events are in the right order.
-                _repo._request.LogEvents.Sort((ev1, ev2) => ev1.Timestamp.CompareTo(ev2.Timestamp));
+                PrepareLogEventBatchForSending();
                 var response = await _client.PutLogEventsAsync(_repo._request, token).ConfigureAwait(false);
                 _repo.Reset(response.NextSequenceToken);
                 _requestCount = 5;
@@ -632,6 +650,18 @@ namespace AWS.Logger.Core
                 Encoding unicode = Encoding.Unicode;
                 _totalMessageSize += unicode.GetMaxByteCount(ev.Message.Length);
                 _request.LogEvents.Add(ev);
+            }
+
+            public void RemoveMessageAt(int index)
+            {
+                if (index < 0 || index >= _request.LogEvents.Count)
+                {
+                    return;
+                }
+                Encoding unicode = Encoding.Unicode;
+                InputLogEvent ev = _request.LogEvents[index];
+                _totalMessageSize -= unicode.GetMaxByteCount(ev.Message.Length);
+                _request.LogEvents.RemoveAt(index);
             }
 
             public void Reset(string SeqToken)
