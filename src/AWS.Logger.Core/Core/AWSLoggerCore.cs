@@ -396,13 +396,11 @@ namespace AWS.Logger.Core
                 }
                 catch (Exception ex)
                 {
-                    // We don't want to kill the main monitor loop. We will simply log the error, then continue.
-                    // If it is an OperationCancelledException, die
-                    LogLibraryServiceError(ex);
-
                     //drop logs in sending batch since those logs may cause exceptions
                     _repo.Reset(null);
-                    LogLibraryServiceError(new Exception("Logs in sending batch are dropped because of exceptions"));
+                    // We don't want to kill the main monitor loop. We will simply log the error, then continue.
+                    // If it is an OperationCancelledException, die
+                    LogLibraryServiceError(new Exception("Logs in the sending batch are dropped because of exceptions", ex));
                 }
             }
         }
