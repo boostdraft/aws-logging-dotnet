@@ -33,6 +33,8 @@ namespace AWS.Logger.Core
         private AWSLoggerConfig _config;
         private DateTime _maxBufferTimeStamp = new DateTime();
         private string _logType;
+        private const int MaxInvalidParameterRetryCount = 3;
+        private int _invalidParameterRetryCount = 0;
 
         /// <summary>
         /// Internal CloudWatch Logs client
@@ -519,6 +521,7 @@ namespace AWS.Logger.Core
                 }
                 await _client.Value.PutLogEventsAsync(_repo._request, token).ConfigureAwait(false);
                 _repo.Reset();
+                _invalidParameterRetryCount = 0;
             }
             catch (ResourceNotFoundException ex)
             {
@@ -529,9 +532,16 @@ namespace AWS.Logger.Core
             }
             catch (InvalidParameterException ex)
             {
-                // Bad log events, log error and discard batch
                 LogLibraryServiceError(ex);
-                _repo.Reset();
+                _invalidParameterRetryCount++;
+                if (_invalidParameterRetryCount >= MaxInvalidParameterRetryCount)
+                {
+                    // Repeated failures on the same batch - discard to avoid blocking the pipeline forever.
+                    _repo.Reset();
+                    _invalidParameterRetryCount = 0;
+                }
+                // Otherwise leave the batch intact so it can be retried; this also gives a transient/
+                // request-level cause a chance to clear before we give up and drop data.
             }
         }
 
