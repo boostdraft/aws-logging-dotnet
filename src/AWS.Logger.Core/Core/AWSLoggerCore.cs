@@ -441,14 +441,25 @@ namespace AWS.Logger.Core
 
         private static readonly TimeSpan MaxLogEventBatchAllowedTimeRange = TimeSpan.FromHours(24);
         private static readonly TimeSpan MaxLogEventFutureAllowance = TimeSpan.FromHours(2);
-        private void PrepareLogEventBatchForSending()
+        /// <summary>
+        /// Sorts the pending batch and strips out events that CloudWatch would reject (too far in the
+        /// future, or too old relative to the newest event in the batch) so the remaining events can be sent.
+        /// </summary>
+        /// <returns>
+        /// The events that were removed from the batch. Callers should hold onto this list and pass it to
+        /// <see cref="RestoreTrimmedEvents"/> if the subsequent send does not succeed, so the removed events
+        /// aren't lost for a send that never went through.
+        /// </returns>
+        private List<InputLogEvent> PrepareLogEventBatchForSending()
         {
+            var removedEvents = new List<InputLogEvent>();
+
             //Make sure the log events are in order from the oldest to the newest.
             _repo._request.LogEvents.Sort((ev1, ev2) =>
                 ev1.Timestamp.GetValueOrDefault().CompareTo(ev2.Timestamp.GetValueOrDefault()));
             if (_repo._request.LogEvents.Count == 0)
             {
-                return;
+                return removedEvents;
             }
 
             DateTime utcNow = DateTime.UtcNow;
@@ -470,12 +481,13 @@ namespace AWS.Logger.Core
             }
             if (firstFutureEventIndexToRemove >= 0)
             {
+                removedEvents.AddRange(_repo._request.LogEvents.GetRange(firstFutureEventIndexToRemove, _repo._request.LogEvents.Count - firstFutureEventIndexToRemove));
                 _repo.RemoveMessages(firstFutureEventIndexToRemove, _repo._request.LogEvents.Count - firstFutureEventIndexToRemove);
             }
 
             if (_repo._request.LogEvents.Count == 0)
             {
-                return;
+                return removedEvents;
             }
 
             DateTime latestLogDateTime = _repo._request.LogEvents.Last().Timestamp ?? utcNow;
@@ -500,7 +512,18 @@ namespace AWS.Logger.Core
             }
             if (lastInvalidEventIndexToRemove >= 0)
             {
+                removedEvents.AddRange(_repo._request.LogEvents.GetRange(0, lastInvalidEventIndexToRemove + 1));
                 _repo.RemoveMessages(0, lastInvalidEventIndexToRemove + 1);
+            }
+
+            return removedEvents;
+        }
+
+        private void RestoreTrimmedEvents(List<InputLogEvent> trimmedEvents)
+        {
+            foreach (var ev in trimmedEvents)
+            {
+                _repo.AddMessage(ev);
             }
         }
 
@@ -511,9 +534,10 @@ namespace AWS.Logger.Core
         /// <returns></returns>
         private async Task SendMessages(CancellationToken token)
         {
+            List<InputLogEvent> trimmedEvents = new List<InputLogEvent>();
             try
             {
-                PrepareLogEventBatchForSending();
+                trimmedEvents = PrepareLogEventBatchForSending();
                 if (_repo._request.LogEvents.Count == 0)
                 {
                     _repo.Reset();
@@ -525,6 +549,7 @@ namespace AWS.Logger.Core
             }
             catch (ResourceNotFoundException ex)
             {
+                RestoreTrimmedEvents(trimmedEvents);
                 // The specified log stream does not exist. Refresh or create new stream.
                 LogLibraryServiceError(ex);
 
@@ -540,8 +565,19 @@ namespace AWS.Logger.Core
                     _repo.Reset();
                     _invalidParameterRetryCount = 0;
                 }
-                // Otherwise leave the batch intact so it can be retried; this also gives a transient/
-                // request-level cause a chance to clear before we give up and drop data.
+                else
+                {
+                    // Otherwise leave the batch intact so it can be retried; this also gives a transient/
+                    // request-level cause a chance to clear before we give up and drop data.
+                    RestoreTrimmedEvents(trimmedEvents);
+                }
+            }
+            catch (Exception)
+            {
+                // Transient failure (network, throttling, timeout, etc.) - the send never went through,
+                // so put back any events the trim removed rather than losing them for nothing.
+                RestoreTrimmedEvents(trimmedEvents);
+                throw;
             }
         }
 
