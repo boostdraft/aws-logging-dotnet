@@ -543,7 +543,15 @@ namespace AWS.Logger.Core
                     _repo.Reset();
                     return;
                 }
-                await _client.Value.PutLogEventsAsync(_repo._request, token).ConfigureAwait(false);
+                var response = await _client.Value.PutLogEventsAsync(_repo._request, token).ConfigureAwait(false);
+                if (response.RejectedLogEventsInfo != null)
+                {
+                    LogLibraryServiceError(new System.InvalidOperationException(
+                        $"CloudWatch accepted the request but rejected some log events: " +
+                        $"TooNewLogEventStartIndex={response.RejectedLogEventsInfo.TooNewLogEventStartIndex}, " +
+                        $"TooOldLogEventEndIndex={response.RejectedLogEventsInfo.TooOldLogEventEndIndex}, " +
+                        $"ExpiredLogEventEndIndex={response.RejectedLogEventsInfo.ExpiredLogEventEndIndex}"));
+                }
                 _repo.Reset();
                 _invalidParameterRetryCount = 0;
             }
