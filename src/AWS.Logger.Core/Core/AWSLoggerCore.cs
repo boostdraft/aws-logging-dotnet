@@ -798,6 +798,10 @@ namespace AWS.Logger.Core
 
             public void AddMessage(InputLogEvent ev)
             {
+                if (!ev.Timestamp.HasValue)
+                {
+                    ev.Timestamp = DateTime.UtcNow;
+                }
                 Encoding unicode = Encoding.Unicode;
                 _totalMessageSize += unicode.GetMaxByteCount(ev.Message?.Length ?? 0);
                 _request.LogEvents.Add(ev);
