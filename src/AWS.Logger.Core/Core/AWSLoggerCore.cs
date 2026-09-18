@@ -753,7 +753,7 @@ namespace AWS.Logger.Core
             public void AddMessage(InputLogEvent ev)
             {
                 Encoding unicode = Encoding.Unicode;
-                _totalMessageSize += unicode.GetMaxByteCount(ev.Message.Length);
+                _totalMessageSize += unicode.GetMaxByteCount(ev.Message?.Length ?? 0);
                 _request.LogEvents.Add(ev);
             }
 
@@ -767,7 +767,7 @@ namespace AWS.Logger.Core
                 for (int i = startIndex; i < startIndex + count; i++)
                 {
                     InputLogEvent ev = _request.LogEvents[i];
-                    _totalMessageSize -= unicode.GetMaxByteCount(ev.Message.Length);
+                    _totalMessageSize -= unicode.GetMaxByteCount(ev.Message?.Length ?? 0);
                 }
                 _request.LogEvents.RemoveRange(startIndex, count);
             }
