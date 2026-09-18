@@ -501,7 +501,7 @@ namespace AWS.Logger.Core
             for (int i = 0; i < _repo._request.LogEvents.Count; i++)
             {
                 var logEvent = _repo._request.LogEvents[i];
-                if (!logEvent.Timestamp.HasValue || (latestLogDateTime - logEvent.Timestamp.Value) > MaxLogEventBatchAllowedTimeRange)
+                if (!logEvent.Timestamp.HasValue || (latestLogDateTime - logEvent.Timestamp.Value) >= MaxLogEventBatchAllowedTimeRange)
                 {
                     lastInvalidEventIndexToRemove = i;
                 }
