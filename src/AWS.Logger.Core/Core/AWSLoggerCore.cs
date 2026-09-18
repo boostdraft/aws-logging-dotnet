@@ -438,38 +438,67 @@ namespace AWS.Logger.Core
         }
 
         private static readonly TimeSpan MaxLogEventBatchAllowedTimeRange = TimeSpan.FromHours(24);
+        private static readonly TimeSpan MaxLogEventFutureAllowance = TimeSpan.FromHours(2);
         private void PrepareLogEventBatchForSending()
         {
             //Make sure the log events are in order from the oldest to the newest.
             _repo._request.LogEvents.Sort((ev1, ev2) =>
                 ev1.Timestamp.GetValueOrDefault().CompareTo(ev2.Timestamp.GetValueOrDefault()));
-            if (_repo._request.LogEvents.Count > 0)
+            if (_repo._request.LogEvents.Count == 0)
             {
-                DateTime latestLogDateTime = _repo._request.LogEvents.Last().Timestamp ?? DateTime.UtcNow;
-                DateTime utcNow = DateTime.UtcNow;
-                if (latestLogDateTime > utcNow)
+                return;
+            }
+
+            DateTime utcNow = DateTime.UtcNow;
+
+            //Avoid the error that a log event's timestamp can't be more than 2 hours in the future.
+            //https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutLogEvents.html
+            int firstFutureEventIndexToRemove = -1;
+            for (int i = _repo._request.LogEvents.Count - 1; i >= 0; i--)
+            {
+                var logEvent = _repo._request.LogEvents[i];
+                if (logEvent.Timestamp.HasValue && (logEvent.Timestamp.Value - utcNow) > MaxLogEventFutureAllowance)
                 {
-                    latestLogDateTime = utcNow;
+                    firstFutureEventIndexToRemove = i;
                 }
-                //Avoid the error that log events must be within a 24-hour window.
-                //https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutLogEvents.html
-                int lastInvalidEventIndexToRemove = -1;
-                for (int i = 0; i < _repo._request.LogEvents.Count; i++)
+                else
                 {
-                    var logEvent = _repo._request.LogEvents[i];
-                    if (!logEvent.Timestamp.HasValue || (latestLogDateTime - logEvent.Timestamp.Value) > MaxLogEventBatchAllowedTimeRange)
-                    {
-                        lastInvalidEventIndexToRemove = i;
-                    }
-                    else
-                    {
-                        break; // Events are in order, so we can stop checking once we find a valid event
-                    }
+                    break; // Events are in order, so we can stop checking once we find a valid event
                 }
-                if (lastInvalidEventIndexToRemove >= 0)
+            }
+            if (firstFutureEventIndexToRemove >= 0)
+            {
+                _repo.RemoveMessages(firstFutureEventIndexToRemove, _repo._request.LogEvents.Count - firstFutureEventIndexToRemove);
+            }
+
+            if (_repo._request.LogEvents.Count == 0)
+            {
+                return;
+            }
+
+            DateTime latestLogDateTime = _repo._request.LogEvents.Last().Timestamp ?? utcNow;
+            if (latestLogDateTime > utcNow)
+            {
+                latestLogDateTime = utcNow;
+            }
+            //Avoid the error that log events must be within a 24-hour window.
+            //https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutLogEvents.html
+            int lastInvalidEventIndexToRemove = -1;
+            for (int i = 0; i < _repo._request.LogEvents.Count; i++)
+            {
+                var logEvent = _repo._request.LogEvents[i];
+                if (!logEvent.Timestamp.HasValue || (latestLogDateTime - logEvent.Timestamp.Value) > MaxLogEventBatchAllowedTimeRange)
                 {
-                    _repo.RemoveMessages(0, lastInvalidEventIndexToRemove + 1);
+                    lastInvalidEventIndexToRemove = i;
                 }
+                else
+                {
+                    break; // Events are in order, so we can stop checking once we find a valid event
+                }
+            }
+            if (lastInvalidEventIndexToRemove >= 0)
+            {
+                _repo.RemoveMessages(0, lastInvalidEventIndexToRemove + 1);
             }
         }
 
